@@ -3,7 +3,7 @@ export interface User {
   email: string;
   password: string;
   role: 'Analyst' | 'Developer';
-  createdAt: Date;
+  createdAt: string;
 }
 
 export interface Document {
@@ -16,8 +16,8 @@ export interface Document {
   rawContent: string;
   s3Key?: string;
   errorMessage?: string;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Prompt {

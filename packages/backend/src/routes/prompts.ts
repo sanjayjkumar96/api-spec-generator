@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Request, Router } from 'express';
 import { authenticateToken } from '../middleware/auth';
 import { promptService } from '../services/promptService';
 import { AuthRequest } from '../types';
@@ -15,7 +15,7 @@ const createPromptSchema = z.object({
 
 promptsRouter.use(authenticateToken);
 
-promptsRouter.get('/', async (req: AuthRequest, res) => {
+promptsRouter.get('/', async (req: Request, res) => {
   try {
     const { category } = req.query;
     const prompts = await promptService.getPrompts(category as string);
@@ -25,7 +25,7 @@ promptsRouter.get('/', async (req: AuthRequest, res) => {
   }
 });
 
-promptsRouter.get('/categories', async (req: AuthRequest, res) => {
+promptsRouter.get('/categories', async (req: Request, res) => {
   try {
     const categories = await promptService.getCategories();
     res.json(categories);
@@ -34,10 +34,11 @@ promptsRouter.get('/categories', async (req: AuthRequest, res) => {
   }
 });
 
-promptsRouter.post('/', async (req: AuthRequest, res) => {
+promptsRouter.post('/', async (req: Request, res) => {
   try {
+    const authReq = req as unknown as AuthRequest;
     const { title, category, promptText, tags } = createPromptSchema.parse(req.body);
-    const prompt = await promptService.createPrompt(req.user!.id, title, category, promptText, tags);
+    const prompt = await promptService.createPrompt(authReq.user!.id, title, category, promptText, tags);
     res.status(201).json(prompt);
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid request' });

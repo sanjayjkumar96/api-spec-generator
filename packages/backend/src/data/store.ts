@@ -71,7 +71,7 @@ export class DataStore {
       email: 'test@example.com',
       password: '$2a$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', // password
       role: 'Analyst',
-      createdAt: new Date()
+      createdAt: new Date().toISOString()
     };
     this.users.set(testUser.id, testUser);
 

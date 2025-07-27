@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import axios from 'axios';
 import { User } from '../types';
+import '../config/api';
 
 interface AuthState {
   user: User | null;
@@ -25,7 +26,7 @@ export const useAuthStore = create<AuthState>()(
       login: async (email: string, password: string) => {
         set({ loading: true, error: null });
         try {
-          const response = await axios.post('/api/auth/login', { email, password });
+          const response = await axios.post('/auth/login', { email, password });
           const { user, token } = response.data;
           
           axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
@@ -42,7 +43,7 @@ export const useAuthStore = create<AuthState>()(
       register: async (email: string, password: string, role: 'Analyst' | 'Developer') => {
         set({ loading: true, error: null });
         try {
-          const response = await axios.post('/api/auth/register', { email, password, role });
+          const response = await axios.post('/auth/register', { email, password, role });
           const { user, token } = response.data;
           
           axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;

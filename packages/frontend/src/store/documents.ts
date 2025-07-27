@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import axios from 'axios';
 import { Document, DocumentGenerationRequest } from '../types';
+import '../config/api';
 
 interface DocumentState {
   documents: Document[];
@@ -20,7 +21,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   fetchDocuments: async () => {
     set({ loading: true, error: null });
     try {
-      const response = await axios.get('/api/documents');
+      const response = await axios.get('/documents');
       set({ documents: response.data, loading: false });
     } catch (error) {
       set({ error: 'Failed to fetch documents', loading: false });
@@ -30,7 +31,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   generateDocument: async (request: DocumentGenerationRequest) => {
     set({ loading: true, error: null });
     try {
-      const response = await axios.post('/api/documents', request);
+      const response = await axios.post('/documents', request);
       
       // Refresh documents list
       get().fetchDocuments();
@@ -48,7 +49,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   getDocument: async (id: string) => {
     try {
-      const response = await axios.get(`/api/documents/${id}`);
+      const response = await axios.get(`/documents/${id}`);
       return response.data;
     } catch (error) {
       throw new Error('Failed to fetch document');

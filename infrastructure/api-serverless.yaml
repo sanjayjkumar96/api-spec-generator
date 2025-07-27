@@ -1,0 +1,125 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'SpecGen AI - Serverless API with Express'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+  
+  LambdaExecutionRoleArn:
+    Type: String
+    Description: Lambda execution role ARN from main stack
+
+  LambdaCodeBucket:
+    Type: String
+    Description: S3 bucket containing Lambda deployment package
+
+  DeploymentId:
+    Type: String
+    Default: '1'
+    Description: Deployment ID to force API Gateway redeployment
+
+Resources:
+  # API Gateway
+  ApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub '${Environment}-specgen-api'
+      Description: SpecGen AI API
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  # API Gateway Resource for proxy
+  ProxyResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: '{proxy+}'
+
+  # API Gateway Method for proxy
+  ProxyMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ProxyResource
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApiFunction.Arn}/invocations'
+
+  # Root method for API Gateway
+  RootMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !GetAtt ApiGateway.RootResourceId
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ApiFunction.Arn}/invocations'
+
+  # API Gateway Deployment
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - ProxyMethod
+      - RootMethod
+    Properties:
+      RestApiId: !Ref ApiGateway
+      StageName: !Ref Environment
+      Description: !Sub 'Deployment ${AWS::StackName} - ${DeploymentId}'
+
+  # Main API Lambda Function
+  ApiFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-specgen-api'
+      Runtime: nodejs18.x
+      Handler: api.handler
+      Role: !Ref LambdaExecutionRoleArn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: api.zip
+      Environment:
+        Variables:
+          NODE_ENV: !Ref Environment
+          USE_MOCK_SERVICES: 'true'
+
+  # Document Generation Lambda
+  GenerateDocumentFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-specgen-generate-document'
+      Runtime: nodejs18.x
+      Handler: generateDocument.handler
+      Role: !Ref LambdaExecutionRoleArn
+      Timeout: 300
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: generateDocument.zip
+      Environment:
+        Variables:
+          NODE_ENV: !Ref Environment
+          USE_MOCK_SERVICES: 'true'
+
+  # Lambda Permissions
+  ApiLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ApiFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGateway}/*/*'
+
+Outputs:
+  ApiGatewayUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+    Export:
+      Name: !Sub '${Environment}-ApiGatewayUrl'

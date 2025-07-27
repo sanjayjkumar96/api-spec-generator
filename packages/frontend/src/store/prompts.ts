@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import axios from 'axios';
 import { Prompt } from '../types';
+import '../config/api';
 
 interface PromptState {
   prompts: Prompt[];
@@ -12,7 +13,7 @@ interface PromptState {
   createPrompt: (prompt: Omit<Prompt, 'id' | 'usageCount' | 'createdAt' | 'updatedAt'>) => Promise<void>;
 }
 
-export const usePromptStore = create<PromptState>((set, get) => ({
+export const usePromptStore = create<PromptState>((set) => ({
   prompts: [],
   categories: [],
   loading: false,
@@ -22,7 +23,7 @@ export const usePromptStore = create<PromptState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const params = category ? { category } : {};
-      const response = await axios.get('/api/prompts', { params });
+      const response = await axios.get('/prompts', { params });
       set({ prompts: response.data, loading: false });
     } catch (error) {
       set({ error: 'Failed to fetch prompts', loading: false });
@@ -31,7 +32,7 @@ export const usePromptStore = create<PromptState>((set, get) => ({
 
   fetchCategories: async () => {
     try {
-      const response = await axios.get('/api/prompts/categories');
+      const response = await axios.get('/prompts/categories');
       set({ categories: response.data });
     } catch (error) {
       console.error('Failed to fetch categories:', error);
@@ -41,7 +42,7 @@ export const usePromptStore = create<PromptState>((set, get) => ({
   createPrompt: async (promptData) => {
     set({ loading: true, error: null });
     try {
-      const response = await axios.post('/api/prompts', promptData);
+      const response = await axios.post('/prompts', promptData);
       set(state => ({
         prompts: [response.data, ...state.prompts],
         loading: false

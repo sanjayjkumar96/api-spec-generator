@@ -1,11 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePromptStore } from '../store/prompts';
-import { useAuthStore } from '../store/auth';
 
 export default function PromptLibrary() {
   const navigate = useNavigate();
-  const { user } = useAuthStore();
   const { prompts, categories, loading, fetchPrompts, fetchCategories, createPrompt } = usePromptStore();
   const [selectedCategory, setSelectedCategory] = useState('');
   const [showAddForm, setShowAddForm] = useState(false);
@@ -30,8 +28,7 @@ export default function PromptLibrary() {
     e.preventDefault();
     try {
       await createPrompt({
-        ...newPrompt,
-        authorId: user!.id
+        ...newPrompt
       });
       setNewPrompt({ title: '', category: '', promptText: '', tags: [] });
       setShowAddForm(false);

@@ -19,7 +19,7 @@ Globals:
     Environment:
       Variables:
         NODE_ENV: !Ref Environment
-        USE_MOCK_SERVICES: false
+        USE_MOCK_SERVICES: true
         AWS_REGION: !Ref AWS::Region
 
 Resources:

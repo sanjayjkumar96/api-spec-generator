@@ -16,8 +16,8 @@ export class DocumentService {
       type: request.type,
       status: 'PENDING',
       rawContent: request.rawContent,
-      createdAt: new Date(),
-      updatedAt: new Date()
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
     };
 
     await dynamoService.createDocument(document);

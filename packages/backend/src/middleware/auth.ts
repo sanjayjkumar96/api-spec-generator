@@ -1,10 +1,12 @@
-import { Response, NextFunction } from 'express';
+import { Response, NextFunction, Request } from 'express';
 import { authService } from '../services/authService';
 import { dynamoService } from '../services/dynamoService';
 import { AuthRequest } from '../types';
 
-export const authenticateToken = async (req: AuthRequest, res: Response, next: NextFunction) => {
-  const authHeader = req.headers['authorization'];
+export const authenticateToken = async (req: Request, res: Response, next: NextFunction) => {
+  const authReq = req as unknown as AuthRequest;
+  //@ts-ignore
+  const authHeader = authReq.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
 
   if (!token) {
@@ -19,7 +21,7 @@ export const authenticateToken = async (req: AuthRequest, res: Response, next: N
       return res.status(401).json({ error: 'User not found' });
     }
 
-    req.user = user;
+    authReq.user = user;
     next();
   } catch (error) {
     return res.status(403).json({ error: 'Invalid token' });

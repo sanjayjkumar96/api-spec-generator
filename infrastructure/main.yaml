@@ -30,6 +30,33 @@ Resources:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
 
+  # S3 Bucket for Frontend
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${Environment}-specgen-frontend-${AWS::AccountId}'
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  # S3 Bucket Policy for Frontend
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub '${FrontendBucket.Arn}/*'
+
   # DynamoDB Tables
   UsersTable:
     Type: AWS::DynamoDB::Table
@@ -131,7 +158,7 @@ Resources:
                 Action:
                   - s3:GetObject
                   - s3:PutObject
-                Resource: !Sub '${DocumentsBucket}/*'
+                Resource: !Sub '${DocumentsBucket.Arn}/*'
               - Effect: Allow
                 Action:
                   - bedrock:InvokeModel
@@ -240,3 +267,15 @@ Outputs:
     Value: !Ref DocumentGenerationStateMachine
     Export:
       Name: !Sub '${Environment}-StateMachine'
+
+  FrontendBucketName:
+    Description: S3 bucket for frontend
+    Value: !Ref FrontendBucket
+    Export:
+      Name: !Sub '${Environment}-FrontendBucket'
+
+  FrontendUrl:
+    Description: Frontend website URL
+    Value: !GetAtt FrontendBucket.WebsiteURL
+    Export:
+      Name: !Sub '${Environment}-FrontendUrl'

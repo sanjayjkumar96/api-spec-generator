@@ -38,7 +38,7 @@ export class AuthService {
       email,
       password: hashedPassword,
       role,
-      createdAt: new Date()
+      createdAt: new Date().toISOString()
     });
 
     const token = jwt.sign(

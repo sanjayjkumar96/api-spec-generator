@@ -42,7 +42,7 @@ export default function DocumentView() {
     if (document?.content) {
       const blob = new Blob([document.content], { type: 'text/markdown' });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
+      const a = window.document.createElement('a');
       a.href = url;
       a.download = `${document.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.md`;
       a.click();
