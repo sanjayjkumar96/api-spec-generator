@@ -1,0 +1,109 @@
+name: Deploy SpecGen AI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  AWS_REGION: us-east-1
+  NODE_VERSION: '18'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run tests
+        run: npm test
+
+  deploy-infrastructure:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+    outputs:
+      environment: ${{ steps.set-env.outputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set environment
+        id: set-env
+        run: |
+          if [[ ${{ github.ref }} == 'refs/heads/main' ]]; then
+            echo "environment=prod" >> $GITHUB_OUTPUT
+          else
+            echo "environment=dev" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Deploy CloudFormation stack
+        run: |
+          aws cloudformation deploy \
+            --template-file infrastructure/main.yaml \
+            --stack-name specgen-${{ steps.set-env.outputs.environment }} \
+            --parameter-overrides Environment=${{ steps.set-env.outputs.environment }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+  build-and-deploy:
+    needs: [test, deploy-infrastructure]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Build backend
+        run: npm run build --workspace=backend
+      
+      - name: Build frontend
+        run: npm run build --workspace=frontend
+        env:
+          VITE_API_URL: ${{ needs.deploy-infrastructure.outputs.environment == 'prod' && 'https://api.specgen.ai' || 'https://api-dev.specgen.ai' }}
+      
+      - name: Deploy to S3
+        run: |
+          aws s3 sync packages/frontend/dist/ s3://${{ needs.deploy-infrastructure.outputs.environment }}-specgen-frontend-${{ github.run_id }} --delete
+      
+      - name: Package Lambda functions
+        run: |
+          cd packages/backend
+          zip -r lambda-package.zip dist/ node_modules/
+      
+      - name: Deploy Lambda functions
+        run: |
+          # This would typically deploy Lambda functions
+          # For now, we'll use the existing Express server approach
+          echo "Lambda deployment would go here"

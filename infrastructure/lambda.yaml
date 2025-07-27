@@ -1,0 +1,130 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'SpecGen AI - Lambda Functions'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+  
+  LambdaExecutionRoleArn:
+    Type: String
+    Description: Lambda execution role ARN from main stack
+
+Globals:
+  Function:
+    Runtime: nodejs18.x
+    Timeout: 30
+    MemorySize: 512
+    Environment:
+      Variables:
+        NODE_ENV: !Ref Environment
+        USE_MOCK_SERVICES: false
+        AWS_REGION: !Ref AWS::Region
+
+Resources:
+  # API Gateway
+  ApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref Environment
+      Cors:
+        AllowMethods: "'*'"
+        AllowHeaders: "'*'"
+        AllowOrigin: "'*'"
+
+  # Lambda Functions
+  AuthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-specgen-auth'
+      CodeUri: ../packages/backend/dist/
+      Handler: lambda/auth.handler
+      Role: !Ref LambdaExecutionRoleArn
+      Events:
+        LoginApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /auth/login
+            Method: post
+        RegisterApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /auth/register
+            Method: post
+
+  DocumentsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-specgen-documents'
+      CodeUri: ../packages/backend/dist/
+      Handler: lambda/documents.handler
+      Role: !Ref LambdaExecutionRoleArn
+      Events:
+        CreateDocumentApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents
+            Method: post
+        GetDocumentsApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents
+            Method: get
+        GetDocumentApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /documents/{id}
+            Method: get
+
+  PromptsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-specgen-prompts'
+      CodeUri: ../packages/backend/dist/
+      Handler: lambda/prompts.handler
+      Role: !Ref LambdaExecutionRoleArn
+      Events:
+        GetPromptsApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /prompts
+            Method: get
+        CreatePromptApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /prompts
+            Method: post
+
+  # Document Generation Lambda
+  GenerateDocumentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-specgen-generate-document'
+      CodeUri: ../packages/backend/dist/
+      Handler: lambda/generateDocument.handler
+      Role: !Ref LambdaExecutionRoleArn
+      Timeout: 300
+
+  # Error Handler Lambda
+  HandleErrorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-specgen-handle-error'
+      CodeUri: ../packages/backend/dist/
+      Handler: lambda/handleError.handler
+      Role: !Ref LambdaExecutionRoleArn
+
+Outputs:
+  ApiGatewayUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+    Export:
+      Name: !Sub '${Environment}-ApiGatewayUrl'
