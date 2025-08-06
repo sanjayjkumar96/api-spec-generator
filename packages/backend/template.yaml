@@ -1,0 +1,628 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'SpecGen AI Backend - Serverless API with Step Functions workflow'
+
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+    Description: Deployment stage
+  
+  JWTSecret:
+    Type: String
+    NoEcho: true
+    Default: dev-secret-key
+    Description: JWT secret key for token signing
+  
+  BedrockModelId:
+    Type: String
+    Default: apac.amazon.nova-pro-v1:0
+    Description: AWS Bedrock model ID for AI content generation
+
+Globals:
+  Function:
+    Runtime: nodejs18.x
+    Timeout: 30
+    MemorySize: 512
+    Environment:
+      Variables:
+        STAGE: !Ref Stage
+        JOBS_TABLE: !Ref JobsTable
+        USERS_TABLE: !Ref UsersTable
+        PROMPTS_TABLE: !Ref PromptsTable
+        S3_BUCKET: !Ref OutputsBucket
+        JWT_SECRET: !Ref JWTSecret
+        BEDROCK_MODEL_ID: !Ref BedrockModelId
+        AWS_NODEJS_CONNECTION_REUSE_ENABLED: 1
+        NODE_ENV: production
+    Tracing: Active
+  Api:
+    Cors:
+      # Allow S3 website endpoints and localhost for development
+      AllowOrigin: !Sub "'http://${FrontendBucket}.s3-website-${AWS::Region}.amazonaws.com,https://${FrontendBucket}.s3-website-${AWS::Region}.amazonaws.com,http://localhost:3000,https://localhost:3000,http://localhost:5173,https://localhost:5173'"
+      AllowMethods: "'DELETE,GET,HEAD,OPTIONS,PATCH,POST,PUT'"
+      AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token,X-Amz-User-Agent,X-Requested-With,Accept,Origin,Cache-Control'"
+      AllowCredentials: true
+
+Resources:
+  # API Gateway and Lambda Functions
+  SpecGenApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-api'
+      CodeUri: dist/
+      Handler: index.handler
+      Timeout: 30
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${AWS::StackName}-job-processing-${Stage}'
+      Events:
+        ApiProxy:
+          Type: Api
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+        ApiRoot:
+          Type: Api
+          Properties:
+            Path: /
+            Method: ANY
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref JobsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsersTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref PromptsTable
+        - S3CrudPolicy:
+            BucketName: !Ref OutputsBucket
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - states:StartExecution
+                - states:DescribeExecution
+                - states:StopExecution
+              Resource: !Sub 'arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:${AWS::StackName}-job-processing-${Stage}'
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeInference
+              Resource: '*'
+
+  ProcessSimpleJobFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-processSimpleJob'
+      CodeUri: dist/lambda/
+      Handler: processSimpleJob.handler
+      Timeout: 300
+      MemorySize: 1024
+      Environment:
+        Variables:
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref JobsTable
+        - S3CrudPolicy:
+            BucketName: !Ref OutputsBucket
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeInference
+              Resource: '*'
+
+  ProcessComplexJobFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-processComplexJob'
+      CodeUri: dist/lambda/
+      Handler: processComplexJob.handler
+      Timeout: 900
+      MemorySize: 1024
+      Environment:
+        Variables:
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref JobsTable
+        - S3CrudPolicy:
+            BucketName: !Ref OutputsBucket
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeInference
+              Resource: '*'
+
+  ConsolidateComplexJobFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-consolidateComplexJob'
+      CodeUri: dist/lambda/
+      Handler: consolidateComplexJob.handler
+      Timeout: 300
+      MemorySize: 1024
+      Environment:
+        Variables:
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref JobsTable
+        - S3CrudPolicy:
+            BucketName: !Ref OutputsBucket
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeInference
+              Resource: '*'
+
+  UpdateJobStatusFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-updateJobStatus'
+      CodeUri: dist/lambda/
+      Handler: updateJobStatus.handler
+      Timeout: 30
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref JobsTable
+
+  # DynamoDB Tables
+  JobsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AWS::StackName}-jobs-${Stage}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: jobId
+          AttributeType: S
+        - AttributeName: userId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: jobId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: UserJobsIndex
+          KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Stage
+        - Key: Application
+          Value: SpecGenAI
+
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AWS::StackName}-users-${Stage}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: userId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: EmailIndex
+          KeySchema:
+            - AttributeName: email
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Stage
+        - Key: Application
+          Value: SpecGenAI
+
+  PromptsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${AWS::StackName}-prompts-${Stage}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+        - AttributeName: category
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: CategoryIndex
+          KeySchema:
+            - AttributeName: category
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Stage
+        - Key: Application
+          Value: SpecGenAI
+
+  # S3 Bucket for outputs
+  OutputsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::StackName}-outputs-${Stage}-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins:
+              - '*'
+            AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - GET
+              - PUT
+              - POST
+              - DELETE
+              - HEAD
+            MaxAge: 3000
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldFiles
+            Status: Enabled
+            ExpirationInDays: 90
+      Tags:
+        - Key: Environment
+          Value: !Ref Stage
+        - Key: Application
+          Value: SpecGenAI
+
+  # S3 Bucket for Frontend Hosting (Public Website)
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::StackName}-frontend-${Stage}-${AWS::AccountId}'
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins:
+              - '*'
+            AllowedHeaders:
+              - '*'
+            AllowedMethods:
+              - GET
+              - HEAD
+            MaxAge: 3600
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      Tags:
+        - Key: Environment
+          Value: !Ref Stage
+        - Key: Application
+          Value: SpecGenAI
+
+  # S3 Bucket Policy for Public Website Access
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Sub 'arn:aws:s3:::${FrontendBucket}/*'
+
+  # Step Functions State Machine
+  JobProcessingStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: !Sub '${AWS::StackName}-job-processing-${Stage}'
+      RoleArn: !GetAtt StepFunctionExecutionRole.Arn
+      DefinitionString: !Sub |
+        {
+          "Comment": "Job Processing State Machine for SpecGen AI",
+          "StartAt": "RouteByJobType",
+          "States": {
+            "RouteByJobType": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Or": [
+                    {
+                      "Variable": "$.jobType",
+                      "StringEquals": "EARS_SPEC"
+                    },
+                    {
+                      "Variable": "$.jobType",
+                      "StringEquals": "USER_STORY"
+                    }
+                  ],
+                  "Next": "ProcessSimpleJob"
+                },
+                {
+                  "Variable": "$.jobType",
+                  "StringEquals": "INTEGRATION_PLAN",
+                  "Next": "ProcessComplexJob"
+                }
+              ],
+              "Default": "JobFailed"
+            },
+            "ProcessSimpleJob": {
+              "Type": "Task",
+              "Resource": "${ProcessSimpleJobFunction.Arn}",
+              "Next": "JobCompleted",
+              "Retry": [
+                {
+                  "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "Next": "JobFailed",
+                  "ResultPath": "$.error"
+                }
+              ]
+            },
+            "ProcessComplexJob": {
+              "Type": "Parallel",
+              "Branches": [
+                {
+                  "StartAt": "GenerateDiagrams",
+                  "States": {
+                    "GenerateDiagrams": {
+                      "Type": "Task",
+                      "Resource": "${ProcessComplexJobFunction.Arn}",
+                      "Parameters": {
+                        "jobId.$": "$.jobId",
+                        "task": "diagrams",
+                        "input.$": "$.input"
+                      },
+                      "End": true,
+                      "Retry": [
+                        {
+                          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"],
+                          "IntervalSeconds": 2,
+                          "MaxAttempts": 3,
+                          "BackoffRate": 2
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "StartAt": "GenerateCode",
+                  "States": {
+                    "GenerateCode": {
+                      "Type": "Task",
+                      "Resource": "${ProcessComplexJobFunction.Arn}",
+                      "Parameters": {
+                        "jobId.$": "$.jobId",
+                        "task": "code",
+                        "input.$": "$.input"
+                      },
+                      "End": true,
+                      "Retry": [
+                        {
+                          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"],
+                          "IntervalSeconds": 2,
+                          "MaxAttempts": 3,
+                          "BackoffRate": 2
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "StartAt": "GenerateStructure",
+                  "States": {
+                    "GenerateStructure": {
+                      "Type": "Task",
+                      "Resource": "${ProcessComplexJobFunction.Arn}",
+                      "Parameters": {
+                        "jobId.$": "$.jobId",
+                        "task": "structure",
+                        "input.$": "$.input"
+                      },
+                      "End": true,
+                      "Retry": [
+                        {
+                          "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"],
+                          "IntervalSeconds": 2,
+                          "MaxAttempts": 3,
+                          "BackoffRate": 2
+                        }
+                      ]
+                    }
+                  }
+                }
+              ],
+              "Next": "ConsolidateResults",
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "Next": "JobFailed",
+                  "ResultPath": "$.error"
+                }
+              ]
+            },
+            "ConsolidateResults": {
+              "Type": "Task",
+              "Resource": "${ConsolidateComplexJobFunction.Arn}",
+              "Next": "JobCompleted",
+              "Retry": [
+                {
+                  "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2
+                }
+              ],
+              "Catch": [
+                {
+                  "ErrorEquals": ["States.ALL"],
+                  "Next": "JobFailed",
+                  "ResultPath": "$.error"
+                }
+              ]
+            },
+            "JobCompleted": {
+              "Type": "Task",
+              "Resource": "${UpdateJobStatusFunction.Arn}",
+              "Parameters": {
+                "jobId.$": "$.jobId",
+                "status": "COMPLETED",
+                "output.$": "$.output"
+              },
+              "End": true
+            },
+            "JobFailed": {
+              "Type": "Task",
+              "Resource": "${UpdateJobStatusFunction.Arn}",
+              "Parameters": {
+                "jobId.$": "$.jobId",
+                "status": "FAILED",
+                "errorMessage.$": "$.error.Cause"
+              },
+              "End": true
+            }
+          }
+        }
+      Tags:
+        - Key: Environment
+          Value: !Ref Stage
+        - Key: Application
+          Value: SpecGenAI
+
+  # IAM Role for Step Functions
+  StepFunctionExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${AWS::StackName}-StepFunctionRole-${Stage}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StepFunctionExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-processSimpleJob'
+                  - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-processComplexJob'
+                  - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-consolidateComplexJob'
+                  - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-updateJobStatus'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: '*'
+
+Outputs:
+  ApiGatewayUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub 'https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod'
+    Export:
+      Name: !Sub '${AWS::StackName}-ApiUrl'
+
+  JobsTableName:
+    Description: DynamoDB Jobs table name
+    Value: !Ref JobsTable
+    Export:
+      Name: !Sub '${AWS::StackName}-JobsTable'
+
+  UsersTableName:
+    Description: DynamoDB Users table name
+    Value: !Ref UsersTable
+    Export:
+      Name: !Sub '${AWS::StackName}-UsersTable'
+
+  PromptsTableName:
+    Description: DynamoDB Prompts table name
+    Value: !Ref PromptsTable
+    Export:
+      Name: !Sub '${AWS::StackName}-PromptsTable'
+
+  OutputsBucketName:
+    Description: S3 bucket for outputs
+    Value: !Ref OutputsBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-OutputsBucket'
+
+  FrontendBucketName:
+    Description: S3 bucket for frontend hosting
+    Value: !Ref FrontendBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-FrontendBucket'
+
+  FrontendUrl:
+    Description: Frontend application URL (S3 website endpoint)
+    Value: !Sub 'http://${FrontendBucket}.s3-website-${AWS::Region}.amazonaws.com'
+    Export:
+      Name: !Sub '${AWS::StackName}-FrontendUrl'
+
+  StateMachineArn:
+    Description: Step Functions State Machine ARN
+    Value: !Ref JobProcessingStateMachine
+    Export:
+      Name: !Sub '${AWS::StackName}-StateMachine'
+
+  StackName:
+    Description: CloudFormation Stack Name
+    Value: !Ref AWS::StackName
+    Export:
+      Name: !Sub '${AWS::StackName}-StackName'

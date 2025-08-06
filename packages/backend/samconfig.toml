@@ -1,0 +1,71 @@
+# SAM Configuration file
+# https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-config.html
+version = 0.1
+
+[default]
+[default.global.parameters]
+stack_name = "spec-gen-ai"
+region = "ap-south-1"
+
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
+confirm_changeset = false
+resolve_s3 = true
+s3_prefix = "spec-gen-ai"
+parameter_overrides = [
+    "Stage=dev",
+    "JWTSecret=dev-secret-key-change-in-production"
+]
+
+[default.package.parameters]
+resolve_s3 = true
+
+[default.sync.parameters]
+watch = true
+
+[default.local.parameters]
+warm_containers = "EAGER"
+
+[dev]
+[dev.deploy.parameters]
+stack_name = "spec-gen-ai-dev"
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
+resolve_s3 = true
+s3_prefix = "spec-gen-ai-dev"
+parameter_overrides = [
+    "Stage=dev",
+    "JWTSecret=dev-secret-key-change-in-production"
+]
+
+[dev.package.parameters]
+resolve_s3 = true
+
+[staging]
+[staging.deploy.parameters]
+stack_name = "spec-gen-ai-staging"
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
+resolve_s3 = true
+s3_prefix = "spec-gen-ai-staging"
+parameter_overrides = [
+    "Stage=staging"
+]
+
+[staging.package.parameters]
+resolve_s3 = true
+
+[prod]
+[prod.deploy.parameters]
+stack_name = "spec-gen-ai-prod"
+capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
+resolve_s3 = true
+s3_prefix = "spec-gen-ai-prod"
+parameter_overrides = [
+    "Stage=prod"
+]
+
+[prod.package.parameters]
+resolve_s3 = true
