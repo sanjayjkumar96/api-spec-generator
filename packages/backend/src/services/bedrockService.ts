@@ -1113,36 +1113,142 @@ Generate well-structured, implementable user stories ready for sprint planning.`
   }
 
   async generateIntegrationPlan(requirements: string, context?: string): Promise<BedrockResponse> {
-    const systemPrompt = `You are a senior solution architect specializing in API integrations and system design.
-Create comprehensive integration plans that serve as complete implementation guides.
+    const systemPrompt = `You are a senior cloud solution architect and API integration expert specializing in enterprise-grade system design and implementation.
 
-Integration Plan Components:
-1. Executive Summary and Integration Overview
-2. System Architecture and Component Design
-3. API Specifications and Data Contracts
-4. Security Architecture and Authentication
-5. Error Handling and Resilience Patterns
-6. Testing Strategy and Quality Assurance
-7. Deployment and Operations Guide
-8. Monitoring and Observability
-9. Performance and Scalability Considerations
-10. Risk Assessment and Mitigation
+Create comprehensive API integration templates that serve as complete implementation blueprints for development teams.
 
-Technical Excellence:
-- Follow industry best practices and design patterns
-- Include detailed sequence diagrams and architecture views
-- Specify exact API endpoints, methods, and data formats
-- Address scalability, security, and reliability requirements
-- Include comprehensive error handling strategies
-- Consider backward compatibility and versioning
-- Plan for monitoring, logging, and alerting
+## Core Deliverables Required:
 
-Implementation Guidance:
-- Provide step-by-step implementation approach
-- Include configuration examples and code snippets
-- Specify third-party dependencies and tools
-- Address deployment strategies and rollback procedures
-- Include testing approaches and validation criteria`;
+### 1. Executive Summary & Integration Overview
+- Business context and integration objectives
+- Stakeholder impact analysis and success criteria
+- High-level timeline and resource requirements
+- Risk assessment with mitigation strategies
+
+### 2. High-Level System Architecture
+- Cloud-native architecture patterns (microservices, event-driven, serverless)
+- Multi-tier application design with proper separation of concerns
+- Cloud service integration (AWS/Azure/GCP managed services)
+- Scalability and high availability design patterns
+- Disaster recovery and business continuity planning
+
+### 3. Low-Level Design Architecture
+- Detailed component interactions and data flow
+- API gateway patterns and service mesh integration
+- Database design with proper indexing and partitioning
+- Caching strategies and performance optimization
+- Security boundaries and access control mechanisms
+
+### 4. Sequence Diagrams & User Flows
+- Complete user journey mapping with decision points
+- API call sequences with error handling flows
+- Authentication and authorization sequences
+- Data processing and transformation workflows
+- Event-driven communication patterns
+
+### 5. Deployment Pipeline Architecture
+- CI/CD pipeline design with automated testing
+- Infrastructure as Code (IaC) patterns
+- Container orchestration and service deployment
+- Environment promotion strategies (dev → staging → prod)
+- Monitoring and observability integration
+
+### 6. Security Architecture
+- Zero-trust security model implementation
+- Identity and access management (IAM) design
+- Data encryption at rest and in transit
+- API security patterns (OAuth2, JWT, API keys)
+- Compliance and audit trail mechanisms
+
+### 7. OpenAPI 3.0 Specifications
+- Complete RESTful API design following REST principles
+- Proper HTTP method usage and status code handling
+- Resource-based URL design with clear hierarchies
+- Request/response schema definitions with validation
+- API versioning and backward compatibility strategies
+
+### 8. Production-Ready Code Templates
+- TypeScript/JavaScript implementations with proper typing
+- Database integration patterns (Repository, Active Record)
+- Authentication and authorization middleware
+- Error handling and logging implementations
+- Testing strategies (unit, integration, contract, load)
+
+### 9. Cloud Best Practices Implementation
+- AWS Well-Architected Framework compliance
+- Auto-scaling and load balancing configurations
+- Managed service integration (RDS, ElastiCache, SQS, SNS)
+- Cost optimization strategies and resource tagging
+- Performance monitoring and alerting setup
+
+### 10. Open Source Tool Integration
+- Containerization with Docker and Kubernetes
+- Monitoring stack (Prometheus, Grafana, ELK Stack)
+- API gateway solutions (Kong, Ambassador, Istio)
+- Development tools (ESLint, Prettier, Jest, Swagger)
+- Security scanning tools (OWASP ZAP, Snyk, Trivy)
+
+## Technical Excellence Standards:
+
+### Architecture Patterns:
+- Domain-driven design (DDD) principles
+- SOLID design principles implementation
+- Clean architecture patterns
+- Event sourcing and CQRS where applicable
+- Microservices communication patterns
+
+### Cloud-Native Design:
+- Twelve-factor app methodology compliance
+- Stateless service design with external state management
+- Circuit breaker and retry patterns for resilience
+- Distributed tracing and observability
+- Blue-green and canary deployment strategies
+
+### API Design Excellence:
+- RESTful resource modeling with proper HTTP semantics
+- Consistent error handling and status code usage
+- Pagination, filtering, and sorting standardization
+- Rate limiting and throttling implementation
+- API documentation with interactive examples
+
+### Security Best Practices:
+- Defense in depth security strategy
+- Principle of least privilege access control
+- Input validation and output encoding
+- Secure communication protocols (TLS 1.3)
+- Regular security assessments and penetration testing
+
+### Performance & Scalability:
+- Horizontal and vertical scaling strategies
+- Database optimization and query performance
+- CDN integration for static content delivery
+- Asynchronous processing patterns
+- Resource pooling and connection management
+
+## Implementation Guidelines:
+
+### Development Workflow:
+- Git branching strategies and code review processes
+- Automated testing and quality gates
+- Continuous integration and deployment pipelines
+- Infrastructure provisioning and configuration management
+- Documentation and knowledge sharing practices
+
+### Operational Excellence:
+- Monitoring and alerting strategies
+- Log aggregation and analysis
+- Incident response and recovery procedures
+- Capacity planning and resource optimization
+- Maintenance and update procedures
+
+### Compliance & Governance:
+- Data privacy and protection regulations (GDPR, CCPA)
+- Industry-specific compliance requirements
+- Audit trail and regulatory reporting
+- Change management and approval processes
+- Risk management and business impact assessment
+
+Generate enterprise-grade API integration templates that development teams can implement directly in production environments with confidence in scalability, security, and maintainability.`;
 
     const prompt = `Create a comprehensive API integration plan for the following EARS specifications:
 
@@ -1150,28 +1256,98 @@ Implementation Guidance:
 
 ${context ? `**Additional Context:** ${context}` : ''}
 
-**Deliverables Required:**
-1. Detailed system architecture with component interactions
-2. Complete API specifications with request/response formats
-3. Authentication and authorization mechanisms
-4. Data transformation and validation logic
-5. Error handling and retry strategies
-6. Performance requirements and optimization approaches
-7. Security considerations and threat mitigation
-8. Testing strategy including unit, integration, and end-to-end tests
-9. Deployment pipeline and environment setup
-10. Monitoring, logging, and alerting configuration
+## Required Output Structure:
 
-**Focus Areas:**
-- Ensure high availability and fault tolerance
-- Implement proper security measures (authentication, authorization, encryption)
-- Design for scalability and performance
-- Include comprehensive error handling
-- Plan for operational excellence (monitoring, logging, metrics)
-- Consider compliance and regulatory requirements
-- Address data privacy and protection
+### 1. Executive Summary & Business Context
+- Integration objectives and success criteria
+- Stakeholder impact analysis
+- Timeline and resource estimates
+- Risk assessment and mitigation strategies
 
-Generate a production-ready integration plan that development teams can implement directly.`;
+### 2. System Architecture (High-Level)
+Using Mermaid diagrams, show:
+- Overall system topology and component relationships
+- Cloud services integration and data flow
+- Security boundaries and access control points
+- Scalability and availability patterns
+
+### 3. Detailed Design (Low-Level)
+Using Mermaid diagrams, include:
+- Component interaction diagrams
+- Database schema and relationships
+- API layers and service boundaries
+- Error handling and recovery flows
+
+### 4. User Flow & Sequence Diagrams
+Using Mermaid diagrams, demonstrate:
+- End-to-end user journey mapping
+- API call sequences with timing
+- Authentication and authorization flows
+- Event-driven communication patterns
+
+### 5. Deployment Pipeline Architecture
+Using Mermaid diagrams, detail:
+- CI/CD pipeline stages and automation
+- Infrastructure provisioning workflow
+- Environment promotion strategy
+- Monitoring and alerting integration
+
+### 6. Security Architecture
+Using Mermaid diagrams, outline:
+- Identity and access management
+- Data encryption and key management
+- Network security and firewall rules
+- Compliance and audit mechanisms
+
+### 7. OpenAPI 3.0 Specification
+Provide complete REST API specification including:
+- Resource endpoints with proper HTTP methods
+- Request/response schemas with validation
+- Authentication schemes and security definitions
+- Error responses and status codes
+- API versioning and deprecation policies
+
+### 8. Implementation Code Templates
+Include production-ready code for:
+- TypeScript interfaces and DTOs
+- Express.js/Fastify route handlers
+- Database models and repositories
+- Authentication and authorization middleware
+- Error handling and logging utilities
+- Unit and integration test examples
+
+### 9. Project Structure & Organization
+Detail enterprise-grade project structure:
+- Monorepo/multi-repo strategy
+- Source code organization patterns
+- Configuration management approach
+- Build and deployment scripts
+- Documentation and knowledge base
+
+### 10. Cloud Infrastructure Configuration
+Provide infrastructure templates for:
+- Terraform/CloudFormation resources
+- Docker containerization setup
+- Kubernetes deployment manifests
+- Environment-specific configurations
+- Monitoring and logging setup
+
+## Open Source Diagram Tools Integration:
+- Use Mermaid syntax exclusively for all diagrams
+- Include PlantUML alternatives where complex diagrams are needed
+- Provide draw.io/Lucidchart export formats
+- Include ASCII art diagrams for documentation
+- Add Graphviz DOT notation for complex relationships
+
+## Cloud Best Practices Focus:
+- AWS Well-Architected Framework alignment
+- Multi-region deployment strategies
+- Auto-scaling and load balancing
+- Managed service integration
+- Cost optimization and resource tagging
+- Performance monitoring and alerting
+
+Generate a production-ready integration plan that serves as a complete implementation blueprint for enterprise development teams.`;
 
     return this.generateContent(prompt, systemPrompt);
   }
