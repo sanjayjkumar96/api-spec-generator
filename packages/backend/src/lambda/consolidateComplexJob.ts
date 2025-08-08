@@ -35,61 +35,110 @@ export const handler: Handler = async (event: any, context: any) => {
       throw new Error('Missing required task results for consolidation');
     }
 
-    // Generate the main integration plan content
+    // Get the original job requirements
     const job = await jobService.getJobById(jobId);
     if (!job) {
       throw new Error(`Job ${jobId} not found`);
     }
 
-    const integrationPlanContent = await bedrockService.generateIntegrationPlan(job.inputData);
+    logger.info('Starting orchestrator-based consolidation', { 
+      jobId,
+      agentTypes: {
+        diagrams: diagramsResult.metadata?.agentType,
+        code: codeResult.metadata?.agentType,
+        structure: structureResult.metadata?.agentType
+      }
+    });
 
-    // Create consolidated content
-    const consolidatedContent = `# API Integration Plan
+    // Use orchestrator agent to consolidate all outputs into a unified integration plan
+    const orchestratorPrompt = `Consolidate the following specialized AI agent outputs into a comprehensive, enterprise-ready API integration plan:
 
-${integrationPlanContent.content}
+## Original Requirements:
+${job.inputData}
 
----
-
-## Architecture Diagrams
-
+## Architecture Diagrams Output:
 ${diagramsResult.content}
 
----
-
-## Code Templates & Implementation
-
+## Code Templates & Implementation Output:
 ${codeResult.content}
 
----
-
-## Project Structure & Organization
-
+## Project Structure & Organization Output:
 ${structureResult.content}
 
----
+## Consolidation Instructions:
+Create a unified integration plan that:
+1. Synthesizes all outputs into a cohesive narrative
+2. Ensures consistency between diagrams, code, and project structure
+3. Provides executive summary and business context
+4. Includes implementation roadmap and success metrics
+5. Addresses cross-cutting concerns (security, performance, operations)
+6. Validates that all components work together seamlessly
 
-## Implementation Summary
+Generate a master integration plan that development teams can confidently implement in production environments.`;
 
-This integration plan provides a comprehensive guide for implementing the requested API integration. 
-The plan includes detailed architecture diagrams, production-ready code templates, and a complete 
-project structure to ensure successful implementation.
+    const orchestratorSystemPrompt = `You are the **Master Integration Plan Orchestrator** - a senior technical program manager and solution architect with expertise in complex system integrations, project coordination, and enterprise-grade delivery management. You oversee the complete integration plan generation process and ensure all components work together seamlessly.
 
-For questions or clarifications, refer to the individual sections above or consult the technical documentation.
-`;
+## Core Mission
+Orchestrate the complete integration plan generation workflow by coordinating multiple specialized AI agents, consolidating their outputs into a unified deliverable, and ensuring comprehensive coverage of all enterprise requirements. Your role is to act as the technical conductor ensuring all pieces fit together perfectly.
+
+## Consolidation Framework
+
+### Executive Package (For Leadership):
+- Strategic objectives and success metrics
+- Resource requirements and timeline
+- Risk assessment and mitigation strategies
+- ROI analysis and business justification
+- High-level architecture and technology decisions
+- Implementation phases and milestones
+
+### Technical Implementation Package (For Development Teams):
+- Complete architectural documentation with all diagrams
+- Production-ready code templates organized by development phase
+- Comprehensive project structure with setup instructions
+- Testing, monitoring, and operational procedures
+- Step-by-step implementation validation checklist
+
+### Operations Package (For DevOps and Operations):
+- Infrastructure as Code templates and deployment procedures
+- Complete monitoring setup and alerting configuration
+- Security implementation and compliance validation
+- Operational runbooks and maintenance procedures
+- Disaster recovery and business continuity procedures
+
+## Quality Validation Framework
+- Ensure architectural diagrams align with code templates
+- Validate project structure supports all proposed implementations
+- Verify security patterns are consistent across all outputs
+- Check that deployment strategies match architectural decisions
+
+## Cross-Cutting Concerns Integration
+- Consolidate security requirements from all agents
+- Synthesize performance requirements from all perspectives
+- Integrate operational requirements from all agents
+- Ensure unified monitoring, alerting, and incident response
+
+You are responsible for delivering a world-class integration plan that enterprise development teams can confidently implement, knowing that all aspects have been thoroughly considered and expertly coordinated.`;
+
+    // Generate consolidated integration plan using orchestrator agent
+    const consolidatedResponse = await bedrockService.generateContentWithModel(
+      orchestratorPrompt,
+      orchestratorSystemPrompt
+    );
 
     // Parse the consolidated content into structured sections
-    const parsedOutput = IntegrationPlanParser.parseIntegrationPlan(consolidatedContent);
+    const parsedOutput = IntegrationPlanParser.parseIntegrationPlan(consolidatedResponse.content);
 
     // Save consolidated plan to S3
     const consolidatedS3Key = `jobs/${jobId}/integration-plan.md`;
     await s3Client.send(new PutObjectCommand({
       Bucket: config.s3.bucket,
       Key: consolidatedS3Key,
-      Body: consolidatedContent,
+      Body: consolidatedResponse.content,
       ContentType: 'text/markdown',
       Metadata: {
         jobId,
         type: 'consolidated-integration-plan',
+        orchestratorAgentId: consolidatedResponse.metadata?.agentId || "",
         generatedAt: new Date().toISOString()
       }
     }));
@@ -114,18 +163,26 @@ For questions or clarifications, refer to the individual sections above or consu
       ...parsedOutput,
       
       // Legacy support for existing frontend
-      content: integrationPlanContent.content,
+      content: consolidatedResponse.content,
       codeSnippets: {
         client: extractCodeSection(codeResult.content, 'Client'),
         dto: extractCodeSection(codeResult.content, 'DTO')
       },
       projectStructure: structureResult.content,
       
-      // Metadata
+      // Metadata with multi-agent information
       metadata: {
         structuredDataAvailable: true,
         structuredS3Key,
         consolidatedS3Key,
+        multiAgentExecution: {
+          orchestratorAgent: consolidatedResponse.metadata?.agentId,
+          specializedAgents: {
+            diagrams: diagramsResult.metadata?.agentId,
+            code: codeResult.metadata?.agentId,
+            structure: structureResult.metadata?.agentId
+          }
+        },
         generatedAt: new Date().toISOString(),
         version: '2.0'
       }
@@ -137,10 +194,11 @@ For questions or clarifications, refer to the individual sections above or consu
       output: output
     });
 
-    logger.info('Complex job consolidation completed', { 
+    logger.info('Complex job consolidation completed with orchestrator agent', { 
       jobId, 
       consolidatedS3Key, 
       structuredS3Key,
+      orchestratorAgentId: consolidatedResponse.metadata?.agentId,
       sectionsCount: parsedOutput.sections?.length || 0,
       diagramsCount: parsedOutput.diagrams?.length || 0,
       codeTemplatesCount: parsedOutput.codeTemplates?.length || 0

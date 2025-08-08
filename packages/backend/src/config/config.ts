@@ -37,10 +37,48 @@ export const config = {
     expiresIn: process.env.JWT_EXPIRES_IN || '7d'
   } as { secret: string; expiresIn: string },
   
-  // Bedrock Configuration
+  // Bedrock Configuration - Multi-Agent Setup
   bedrock: {
+    // Base model for simple jobs and consolidation
     modelId: process.env.BEDROCK_MODEL_ID || 'apac.amazon.nova-pro-v1:0',
     region: process.env.AWS_REGION || 'ap-south-1',
+    
+    // Knowledge Base Configuration
+    knowledgeBase: {
+      knowledgeBaseId: process.env.BEDROCK_KNOWLEDGE_BASE_ID || 'JNYBRB0XCG',
+      numberOfResults: parseInt(process.env.KNOWLEDGE_BASE_RESULTS || '5', 10),
+      enableKnowledgeBase: process.env.ENABLE_KNOWLEDGE_BASE !== 'false' // Default to true
+    },
+    
+    // Default agent (for backward compatibility and consolidation tasks)
+    defaultAgent: {
+      agentId: process.env.BEDROCK_AGENT_ID || 'EDZEP7ZPCP',
+      agentAliasId: process.env.BEDROCK_AGENT_ALIAS_ID || 'UAHRZEARPW',
+    },
+    
+    // Specialized agents for complex job tasks
+    agents: {
+      // Architecture & Diagram Generation Agent
+      diagrams: {
+        agentId: process.env.BEDROCK_DIAGRAM_AGENT_ID || process.env.BEDROCK_AGENT_ID || 'NYSFDNVY2G',
+        agentAliasId: process.env.BEDROCK_DIAGRAM_AGENT_ALIAS_ID || process.env.BEDROCK_AGENT_ALIAS_ID || 'YVJ8AZG9X6',
+      },
+      // Developer & Code Generation Agent
+      code: {
+        agentId: process.env.BEDROCK_CODE_AGENT_ID || process.env.BEDROCK_AGENT_ID || 'WUIEZIG83P',
+        agentAliasId: process.env.BEDROCK_CODE_AGENT_ALIAS_ID || process.env.BEDROCK_AGENT_ALIAS_ID || '8HRENVFQC2',
+      },
+      // Project Structure & Solution Architect Agent
+      structure: {
+        agentId: process.env.BEDROCK_STRUCTURE_AGENT_ID || process.env.BEDROCK_AGENT_ID || 'WRBWWR8H8N',
+        agentAliasId: process.env.BEDROCK_STRUCTURE_AGENT_ALIAS_ID || process.env.BEDROCK_AGENT_ALIAS_ID || 'M7XCZFQLKD',
+      },
+      // Integration Plan Orchestrator Agent
+      orchestrator: {
+        agentId: process.env.BEDROCK_ORCHESTRATOR_AGENT_ID || process.env.BEDROCK_AGENT_ID || 'WRBWWR8H8N',
+        agentAliasId: process.env.BEDROCK_ORCHESTRATOR_AGENT_ALIAS_ID || process.env.BEDROCK_AGENT_ALIAS_ID || 'M7XCZFQLKD',
+      }
+    }
   },
   
   // Rate limiting
@@ -53,7 +91,8 @@ export const config = {
   features: {
     enableRateLimit: process.env.ENABLE_RATE_LIMIT === 'true',
     enableMetrics: process.env.ENABLE_METRICS === 'true',
-    debugMode: process.env.DEBUG_MODE === 'true'
+    debugMode: process.env.DEBUG_MODE === 'true',
+    useMultiAgent: process.env.USE_MULTI_AGENT !== 'false' // Default to true
   }
 };
 

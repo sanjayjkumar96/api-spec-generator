@@ -184,5 +184,17 @@ export interface BedrockResponse {
     inputTokens: number;
     outputTokens: number;
   };
-  metadata?: Record<string, any>;
+  metadata?: {
+    modelId?: string;
+    agentId?: string;
+    agentAliasId?: string;
+    agentType?: 'diagrams' | 'code' | 'structure' | 'orchestrator' | 'default';
+    sessionId?: string;
+    timestamp?: string;
+    mode?: 'direct-model' | 'agent';
+    mockMode?: boolean;
+    knowledgeBaseUsed?: boolean;
+    knowledgeBaseResultsCount?: number;
+    [key: string]: any;
+  };
 }

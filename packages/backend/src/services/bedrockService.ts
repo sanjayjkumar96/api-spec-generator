@@ -1,30 +1,59 @@
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+import { BedrockAgentRuntimeClient, InvokeAgentCommand, RetrieveCommand } from '@aws-sdk/client-bedrock-agent-runtime';
 import { config } from '../config/config';
 import { BedrockResponse } from '../models';
 import { logger } from '../utils/logger';
 
+export type AgentType = 'diagrams' | 'code' | 'structure' | 'orchestrator' | 'default';
+
 export class BedrockService {
   private client: BedrockRuntimeClient;
+  private agentClient: BedrockAgentRuntimeClient;
   private modelId: string;
 
   constructor() {
     this.client = new BedrockRuntimeClient({ region: config.bedrock.region });
+    this.agentClient = new BedrockAgentRuntimeClient({ region: config.bedrock.region });
     this.modelId = config.bedrock.modelId;
   }
 
-  async generateContent(prompt: string, systemPrompt?: string): Promise<BedrockResponse> {
+  /**
+   * Generate content using direct model invocation (for simple jobs)
+   */
+  async generateContentWithModel(prompt: string, systemPrompt?: string): Promise<BedrockResponse> {
     // Check if we're in mock mode for local development
     if (process.env.USE_MOCK_SERVICES === 'true') {
       return this.generateMockContent(prompt, systemPrompt);
     }
 
     try {
+      let enhancedSystemPrompt = systemPrompt || 'You are a helpful AI assistant.';
+      let knowledgeBaseContext = '';
+      
+      // Retrieve knowledge base context if enabled
+      if (config.bedrock.knowledgeBase.enableKnowledgeBase) {
+        try {
+          const knowledgeBaseResults = await this.retrieveKnowledgeBaseContent(prompt);
+          if (knowledgeBaseResults && knowledgeBaseResults.length > 0) {
+            knowledgeBaseContext = this.formatKnowledgeBaseResults(knowledgeBaseResults);
+            enhancedSystemPrompt = `${systemPrompt || 'You are a helpful AI assistant.'}\n\n## Knowledge Base Context:\n${knowledgeBaseContext}\n\nUse the above knowledge base information to provide accurate and contextual responses. Reference specific information from the knowledge base when relevant.`;
+            
+            logger.info('Knowledge base context retrieved and added', {
+              resultsCount: knowledgeBaseResults.length,
+              contextLength: knowledgeBaseContext.length
+            });
+          }
+        } catch (kbError) {
+          logger.warn('Failed to retrieve knowledge base content, proceeding without it', { error: kbError });
+          // Continue without knowledge base context rather than failing the entire request
+        }
+      }
 
       const command = new InvokeModelCommand({
         modelId: this.modelId,
         body: JSON.stringify({
           system: [
-            { text: systemPrompt || 'You are a helpful AI assistant.' }
+            { text: enhancedSystemPrompt }
           ],
           messages: [
             {
@@ -44,13 +73,13 @@ export class BedrockService {
       const response = await this.client.send(command);
       const responseData = JSON.parse(new TextDecoder().decode(response.body));
 
-      logger.info('Bedrock response received', {
+      logger.info('Direct model response received', {
+        modelId: this.modelId,
         inputTokens: responseData.usage?.inputTokens,
         outputTokens: responseData.usage?.outputTokens,
-        response: responseData
+        knowledgeBaseUsed: knowledgeBaseContext.length > 0
       });
 
-      // Extract content from the correct response structure
       const content = responseData.output?.message?.content?.[0]?.text || 
                      responseData.content?.[0]?.text || 
                      responseData.output?.text ||
@@ -65,13 +94,123 @@ export class BedrockService {
         },
         metadata: {
           modelId: this.modelId,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          mode: 'direct-model',
+          knowledgeBaseUsed: knowledgeBaseContext.length > 0,
+          knowledgeBaseResultsCount: knowledgeBaseContext.length > 0 ? 
+            (knowledgeBaseContext.match(/\n\n/g) || []).length + 1 : 0
         }
       };
     } catch (error) {
-      logger.error('Error invoking Bedrock model:', error);
-      throw new Error('Failed to generate content with AI model');
+      logger.error('Error invoking Bedrock model directly:', error);
+      throw new Error('Failed to generate content with direct model invocation');
     }
+  }
+
+  /**
+   * Generate content using specialized agent (for complex tasks)
+   */
+  async generateContentWithAgent(prompt: string, agentType: AgentType, systemPrompt?: string): Promise<BedrockResponse> {
+    // Check if we're in mock mode for local development
+    if (process.env.USE_MOCK_SERVICES === 'true') {
+      return this.generateMockContent(prompt, systemPrompt);
+    }
+
+    try {
+      // Get agent configuration based on type
+      const agentConfig = this.getAgentConfig(agentType);
+      
+      // Use agent for enhanced content generation
+      const command = new InvokeAgentCommand({
+        agentId: agentConfig.agentId,
+        agentAliasId: agentConfig.agentAliasId,
+        sessionId: `session-${agentType}-${Date.now()}`,
+        inputText: `${systemPrompt ? systemPrompt + '\n\n' : ''}${prompt}`
+      });
+
+      const response = await this.agentClient.send(command);
+
+      logger.info('Bedrock agent response received', {
+        agentType,
+        agentId: agentConfig.agentId,
+        sessionId: response.sessionId
+      });
+
+      // Handle streaming response
+      let content = 'No content generated';
+      if (response.completion) {
+        content = await this.processStreamResponse(response.completion);
+      }
+
+      return {
+        content,
+        usage: {
+          inputTokens: 0, // Not available in agent response
+          outputTokens: 0  // Not available in agent response
+        },
+        metadata: {
+          modelId: this.modelId,
+          agentId: agentConfig.agentId,
+          agentAliasId: agentConfig.agentAliasId,
+          agentType,
+          sessionId: response.sessionId,
+          timestamp: new Date().toISOString(),
+          mode: 'agent'
+        }
+      };
+    } catch (error) {
+      logger.error('Error invoking Bedrock agent:', { agentType, error });
+      throw new Error(`Failed to generate content with ${agentType} agent`);
+    }
+  }
+
+  /**
+   * Legacy method for backward compatibility - delegates to appropriate method
+   */
+  async generateContent(prompt: string, systemPrompt?: string, agentType?: AgentType): Promise<BedrockResponse> {
+    if (config.features.useMultiAgent && agentType && agentType !== 'default') {
+      return this.generateContentWithAgent(prompt, agentType, systemPrompt);
+    } else {
+      // For simple jobs or when multi-agent is disabled, use direct model
+      return this.generateContentWithModel(prompt, systemPrompt);
+    }
+  }
+
+  /**
+   * Get agent configuration based on type
+   */
+  private getAgentConfig(agentType: AgentType): { agentId: string; agentAliasId: string } {
+    switch (agentType) {
+      case 'diagrams':
+        return config.bedrock.agents.diagrams;
+      case 'code':
+        return config.bedrock.agents.code;
+      case 'structure':
+        return config.bedrock.agents.structure;
+      case 'orchestrator':
+        return config.bedrock.agents.orchestrator;
+      case 'default':
+      default:
+        return config.bedrock.defaultAgent;
+    }
+  }
+
+  private async processStreamResponse(completion: any): Promise<string> {
+    let content = '';
+    
+    try {
+      for await (const chunk of completion) {
+        if (chunk.chunk?.bytes) {
+          const text = new TextDecoder().decode(chunk.chunk.bytes);
+          content += text;
+        }
+      }
+    } catch (error) {
+      logger.error('Error processing stream:', error);
+      return 'Error processing response';
+    }
+    
+    return content || 'No content generated';
   }
 
   private async generateMockContent(prompt: string, systemPrompt?: string): Promise<BedrockResponse> {
@@ -376,437 +515,6 @@ CREATE TABLE data_items (
 ## 3. Project Structure & Organization
 
 \`\`\`
-project-root/
-├── frontend/
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── common/
-│   │   │   └── pages/
-│   │   ├── services/
-│   │   ├── utils/
-│   │   └── types/
-│   ├── public/
-│   └── package.json
-├── backend/
-│   ├── src/
-│   │   ├── controllers/
-│   │   ├── services/
-│   │   ├── models/
-│   │   ├── middleware/
-│   │   ├── config/
-│   │   └── utils/
-│   ├── tests/
-│   └── package.json
-├── shared/
-│   └── types/
-├── docs/
-│   ├── api/
-│   └── deployment/
-└── docker-compose.yml
-\`\`\`
-
----
-
-## 4. Implementation Summary
-
-This integration plan provides a comprehensive approach to implementing the requested system. 
-
-### Key Components:
-- **Architecture**: Scalable microservices design with clear separation of concerns
-- **Implementation**: Modern tech stack with TypeScript, React, and Node.js
-- **Organization**: Well-structured codebase with proper separation of frontend/backend
-
-### Next Steps:
-1. Review the architecture diagrams and validate against requirements
-2. Set up the project structure as outlined
-3. Implement the API specifications using the provided templates
-4. Configure database schema and initial data
-5. Set up CI/CD pipeline for automated deployment
-
-### Security Considerations:
-- JWT-based authentication
-- Input validation and sanitization
-- HTTPS encryption for all communications
-- Regular security audits and updates
-
-### Performance Optimization:
-- Database indexing strategy
-- Caching implementation
-- Load balancing configuration
-- CDN setup for static assets
-
----
-*This integration plan is a mockup generated for local development.*`;
-  }
-
-  private getMockDiagrams(): string {
-    return `# System Architecture Diagrams
-
-## High-Level System Design
-
-\`\`\`
-┌──────────────────────────────────────────────────────────────┐
-│                        User Interface Layer                  │
-├──────────────────────────────────────────────────────────────┤
-│  Web App (React)  │  Mobile App   │  Admin Dashboard        │
-└──────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌──────────────────────────────────────────────────────────────┐
-│                     API Gateway Layer                       │
-├──────────────────────────────────────────────────────────────┤
-│  Load Balancer  │  Rate Limiting  │  Authentication         │
-└──────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌──────────────────────────────────────────────────────────────┐
-│                    Business Logic Layer                     │
-├──────────────────────────────────────────────────────────────┤
-│  Auth Service  │  Data Service  │  Notification Service     │
-└──────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-┌──────────────────────────────────────────────────────────────┐
-│                      Data Storage Layer                     │
-├──────────────────────────────────────────────────────────────┤
-│  Primary DB    │  Cache Layer   │  File Storage              │
-└──────────────────────────────────────────────────────────────┘
-\`\`\`
-
-## Component Interaction Diagrams
-
-### Authentication Flow
-\`\`\`
-User → Frontend → API Gateway → Auth Service → Database
-                     │              │
-                     ▼              ▼
-              JWT Token ←────── User Validation
-                     │
-                     ▼
-               Frontend Storage
-\`\`\`
-
-### Data Processing Flow
-\`\`\`
-Client Request → Validation → Business Logic → Database Query
-      │                                              │
-      ▼                                              ▼
-  Error Handler ←─────── Processing Engine ←──── Data Transform
-      │                       │                      │
-      ▼                       ▼                      ▼
-  Error Response          Success Response      Cache Update
-\`\`\`
-
-## Deployment Architecture
-
-\`\`\`
-┌─────────────────┐
-│   Load Balancer │
-└─────────────────┘
-         │
-    ┌────┴────┐
-    ▼         ▼
-┌─────────┐ ┌─────────┐
-│ Server1 │ │ Server2 │
-└─────────┘ └─────────┘
-    │         │
-    └────┬────┘
-         ▼
-┌─────────────────┐
-│    Database     │
-│   Cluster       │
-└─────────────────┘
-\`\`\`
-
-## Security Architecture Overview
-
-\`\`\`
-Internet → WAF → Load Balancer → API Gateway
-                     │               │
-                     ▼               ▼
-               Rate Limiter    Authentication
-                     │               │
-                     ▼               ▼
-            DDoS Protection    Authorization
-                     │               │
-                     └───────┬───────┘
-                             ▼
-                     Application Layer
-                             │
-                             ▼
-                    Encrypted Database
-\`\`\`
-
----
-*These are mock architecture diagrams generated for local development.*`;
-  }
-
-  private getMockCodeTemplates(): string {
-    return `# Code Templates and Implementation Examples
-
-## API Client Template
-
-\`\`\`typescript
-// api-client.ts
-import axios, { AxiosInstance, AxiosResponse } from 'axios';
-
-export class ApiClient {
-  private client: AxiosInstance;
-
-  constructor(baseURL: string, apiKey?: string) {
-    this.client = axios.create({
-      baseURL,
-      timeout: 10000,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(apiKey && { 'Authorization': \`Bearer \${apiKey}\` })
-      }
-    });
-
-    this.setupInterceptors();
-  }
-
-  private setupInterceptors(): void {
-    this.client.interceptors.request.use(
-      (config) => {
-        console.log(\`Making request to: \${config.url}\`);
-        return config;
-      },
-      (error) => Promise.reject(error)
-    );
-
-    this.client.interceptors.response.use(
-      (response) => response,
-      (error) => {
-        console.error('API Error:', error.response?.data);
-        return Promise.reject(error);
-      }
-    );
-  }
-
-  async get<T>(url: string): Promise<T> {
-    const response: AxiosResponse<T> = await this.client.get(url);
-    return response.data;
-  }
-
-  async post<T>(url: string, data: any): Promise<T> {
-    const response: AxiosResponse<T> = await this.client.post(url, data);
-    return response.data;
-  }
-
-  async put<T>(url: string, data: any): Promise<T> {
-    const response: AxiosResponse<T> = await this.client.put(url, data);
-    return response.data;
-  }
-
-  async delete<T>(url: string): Promise<T> {
-    const response: AxiosResponse<T> = await this.client.delete(url);
-    return response.data;
-  }
-}
-\`\`\`
-
-## Data Transfer Objects (DTOs)
-
-\`\`\`typescript
-// dto/user.dto.ts
-export interface CreateUserDto {
-  email: string;
-  password: string;
-  firstName: string;
-  lastName: string;
-  role?: 'user' | 'admin';
-}
-
-export interface UpdateUserDto {
-  firstName?: string;
-  lastName?: string;
-  email?: string;
-}
-
-export interface UserResponseDto {
-  id: string;
-  email: string;
-  firstName: string;
-  lastName: string;
-  role: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-// dto/job.dto.ts
-export interface CreateJobDto {
-  title: string;
-  description: string;
-  jobType: 'EARS_SPEC' | 'USER_STORY' | 'INTEGRATION_PLAN';
-  input: {
-    requirements: string;
-    context?: string;
-    format?: string;
-    additionalParams?: Record<string, any>;
-  };
-}
-
-export interface JobResponseDto {
-  jobId: string;
-  userId: string;
-  title: string;
-  description: string;
-  jobType: string;
-  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
-  input: any;
-  output?: any;
-  createdAt: string;
-  updatedAt: string;
-  completedAt?: string;
-  errorMessage?: string;
-}
-\`\`\`
-
-## Service Layer Template
-
-\`\`\`typescript
-// services/base.service.ts
-export abstract class BaseService<T> {
-  protected abstract repository: any;
-
-  async findById(id: string): Promise<T | null> {
-    try {
-      return await this.repository.findById(id);
-    } catch (error) {
-      console.error(\`Error finding \${this.constructor.name} by ID:\`, error);
-      throw new Error(\`Failed to find record with ID: \${id}\`);
-    }
-  }
-
-  async create(data: Partial<T>): Promise<T> {
-    try {
-      return await this.repository.create(data);
-    } catch (error) {
-      console.error(\`Error creating \${this.constructor.name}:\`, error);
-      throw new Error('Failed to create record');
-    }
-  }
-
-  async update(id: string, data: Partial<T>): Promise<T> {
-    try {
-      return await this.repository.update(id, data);
-    } catch (error) {
-      console.error(\`Error updating \${this.constructor.name}:\`, error);
-      throw new Error(\`Failed to update record with ID: \${id}\`);
-    }
-  }
-
-  async delete(id: string): Promise<void> {
-    try {
-      await this.repository.delete(id);
-    } catch (error) {
-      console.error(\`Error deleting \${this.constructor.name}:\`, error);
-      throw new Error(\`Failed to delete record with ID: \${id}\`);
-    }
-  }
-}
-\`\`\`
-
-## Error Handling Template
-
-\`\`\`typescript
-// middleware/error-handler.ts
-import { Request, Response, NextFunction } from 'express';
-
-export class AppError extends Error {
-  statusCode: number;
-  isOperational: boolean;
-
-  constructor(message: string, statusCode: number) {
-    super(message);
-    this.statusCode = statusCode;
-    this.isOperational = true;
-
-    Error.captureStackTrace(this, this.constructor);
-  }
-}
-
-export const errorHandler = (
-  error: Error,
-  req: Request,
-  res: Response,
-  next: NextFunction
-): void => {
-  let { statusCode = 500, message } = error as AppError;
-
-  if (process.env.NODE_ENV === 'production') {
-    // Don't leak error details in production
-    if (statusCode === 500) {
-      message = 'Something went wrong!';
-    }
-  }
-
-  console.error('Error:', {
-    message: error.message,
-    stack: error.stack,
-    url: req.url,
-    method: req.method,
-    timestamp: new Date().toISOString()
-  });
-
-  res.status(statusCode).json({
-    success: false,
-    error: {
-      message,
-      ...(process.env.NODE_ENV !== 'production' && { stack: error.stack })
-    }
-  });
-};
-\`\`\`
-
-## Configuration Template
-
-\`\`\`typescript
-// config/app.config.ts
-interface AppConfig {
-  port: number;
-  nodeEnv: string;
-  database: {
-    url: string;
-    maxConnections: number;
-  };
-  jwt: {
-    secret: string;
-    expiresIn: string;
-  };
-  cors: {
-    origins: string[];
-  };
-}
-
-export const config: AppConfig = {
-  port: parseInt(process.env.PORT || '3000', 10),
-  nodeEnv: process.env.NODE_ENV || 'development',
-  database: {
-    url: process.env.DATABASE_URL || 'postgresql://localhost:5432/myapp',
-    maxConnections: parseInt(process.env.DB_MAX_CONNECTIONS || '10', 10)
-  },
-  jwt: {
-    secret: process.env.JWT_SECRET || 'default-secret',
-    expiresIn: process.env.JWT_EXPIRES_IN || '24h'
-  },
-  cors: {
-    origins: process.env.CORS_ORIGINS?.split(',') || ['http://localhost:3000']
-  }
-};
-\`\`\`
-
----
-*These are mock code templates generated for local development.*`;
-  }
-
-  private getMockProjectStructure(): string {
-    return `# Recommended Project Structure
-
-## Full-Stack Application Structure
-
-\`\`\`
 project-name/
 ├── .gitignore
 ├── README.md
@@ -1021,6 +729,252 @@ project-name/
 *This is a mock project structure recommendation generated for local development.*`;
   }
 
+  private getMockDiagrams(): string {
+    return `# System Diagrams
+
+## Architecture Overview
+\`\`\`mermaid
+graph TB
+    A[User Interface] --> B[API Gateway]
+    B --> C[Authentication Service]
+    B --> D[Business Logic Service]
+    D --> E[Database]
+    D --> F[External APIs]
+\`\`\`
+
+## Sequence Diagram
+\`\`\`mermaid
+sequenceDiagram
+    participant User
+    participant Frontend
+    participant API
+    participant Database
+    
+    User->>Frontend: Enter credentials
+    Frontend->>API: POST /auth/login
+    API->>Database: Validate user
+    Database-->>API: User data
+    API-->>Frontend: JWT token
+    Frontend-->>User: Dashboard
+\`\`\`
+
+## Component Diagram
+\`\`\`mermaid
+graph LR
+    subgraph "Frontend Layer"
+        A[React Components]
+        B[State Management]
+        C[API Client]
+    end
+    
+    subgraph "Backend Layer"
+        D[Controllers]
+        E[Services]
+        F[Repositories]
+    end
+    
+    subgraph "Data Layer"
+        G[Database]
+        H[Cache]
+        I[File Storage]
+    end
+    
+    A --> C
+    C --> D
+    D --> E
+    E --> F
+    F --> G
+    E --> H
+    E --> I
+\`\`\`
+
+---
+*These are mock diagrams generated for local development.*`;
+  }
+
+  private getMockCodeTemplates(): string {
+    return `# Code Templates
+
+## TypeScript Interface Templates
+\`\`\`typescript
+// User interface
+interface User {
+  id: string;
+  email: string;
+  name: string;
+  role: 'admin' | 'user';
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// API Response wrapper
+interface ApiResponse<T> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  pagination?: {
+    page: number;
+    limit: number;
+    total: number;
+  };
+}
+
+// Authentication token
+interface AuthToken {
+  token: string;
+  refreshToken: string;
+  expiresAt: Date;
+}
+\`\`\`
+
+## Express.js Route Template
+\`\`\`typescript
+import { Router, Request, Response } from 'express';
+import { authMiddleware } from '../middleware/auth';
+
+const router = Router();
+
+// GET /api/users
+router.get('/', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const users = await userService.getAll();
+    res.json({
+      success: true,
+      data: users
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch users'
+    });
+  }
+});
+
+export default router;
+\`\`\`
+
+## React Component Template
+\`\`\`typescript
+import React, { useState, useEffect } from 'react';
+import { User } from '../types/User';
+import { userService } from '../services/userService';
+
+interface UserListProps {
+  className?: string;
+}
+
+export const UserList: React.FC<UserListProps> = ({ className }) => {
+  const [users, setUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchUsers = async () => {
+      try {
+        const response = await userService.getAll();
+        setUsers(response.data);
+      } catch (error) {
+        console.error('Failed to fetch users:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchUsers();
+  }, []);
+
+  if (loading) {
+    return <div>Loading...</div>;
+  }
+
+  return (
+    <div className={className}>
+      {users.map(user => (
+        <div key={user.id}>
+          {user.name} ({user.email})
+        </div>
+      ))}
+    </div>
+  );
+};
+\`\`\`
+
+---
+*These are mock code templates generated for local development.*`;
+  }
+
+  private getMockProjectStructure(): string {
+    return `# Project Structure Recommendations
+
+## Monorepo Structure
+\`\`\`
+project-root/
+├── packages/
+│   ├── frontend/          # React/Vue/Angular application
+│   ├── backend/           # Node.js/Express API server
+│   ├── shared/            # Shared types and utilities
+│   └── mobile/            # React Native/Flutter app
+├── tools/
+│   ├── build/             # Build configuration
+│   ├── deploy/            # Deployment scripts
+│   └── docs/              # Documentation generation
+├── configs/
+│   ├── eslint/            # Linting configuration
+│   ├── prettier/          # Code formatting
+│   └── jest/              # Testing configuration
+└── infrastructure/
+    ├── terraform/         # Infrastructure as Code
+    ├── docker/            # Container definitions
+    └── kubernetes/        # K8s manifests
+\`\`\`
+
+## Microservices Structure
+\`\`\`
+services/
+├── api-gateway/           # Entry point and routing
+├── auth-service/          # Authentication and authorization
+├── user-service/          # User management
+├── notification-service/  # Email/SMS notifications
+├── file-service/          # File upload and storage
+└── shared/
+    ├── middleware/        # Common middleware
+    ├── types/             # Shared TypeScript types
+    └── utils/             # Utility functions
+\`\`\`
+
+## Frontend Architecture
+\`\`\`
+src/
+├── components/
+│   ├── ui/                # Reusable UI components
+│   ├── forms/             # Form components
+│   └── layout/            # Layout components
+├── pages/                 # Route-level components
+├── hooks/                 # Custom React hooks
+├── services/              # API and external services
+├── store/                 # State management
+├── utils/                 # Helper functions
+├── types/                 # TypeScript definitions
+└── assets/                # Static assets
+\`\`\`
+
+## Backend Architecture
+\`\`\`
+src/
+├── controllers/           # Request/response handling
+├── services/              # Business logic
+├── repositories/          # Data access layer
+├── models/                # Data models
+├── middleware/            # Express middleware
+├── routes/                # API route definitions
+├── config/                # Configuration files
+├── utils/                 # Utility functions
+└── types/                 # TypeScript definitions
+\`\`\`
+
+---
+*This is a mock project structure generated for local development.*`;
+  }
+
   async generateEARSSpec(requirements: string, context?: string): Promise<BedrockResponse> {
     const systemPrompt = `You are an expert requirements engineer specializing in EARS (Easy Approach to Requirements Syntax) specifications. 
 Create comprehensive, well-structured requirements following EARS syntax patterns:
@@ -1063,7 +1017,7 @@ ${context ? `**Additional Context:** ${context}` : ''}
 
 Please provide a detailed, production-ready EARS specification.`;
 
-    return this.generateContent(prompt, systemPrompt);
+    return this.generateContentWithModel(prompt, systemPrompt);
   }
 
   async generateUserStories(requirements: string, context?: string): Promise<BedrockResponse> {
@@ -1109,7 +1063,7 @@ ${context ? `**Additional Context:** ${context}` : ''}
 
 Generate well-structured, implementable user stories ready for sprint planning.`;
 
-    return this.generateContent(prompt, systemPrompt);
+    return this.generateContentWithModel(prompt, systemPrompt);
   }
 
   async generateIntegrationPlan(requirements: string, context?: string): Promise<BedrockResponse> {
@@ -1349,6 +1303,81 @@ Provide infrastructure templates for:
 
 Generate a production-ready integration plan that serves as a complete implementation blueprint for enterprise development teams.`;
 
-    return this.generateContent(prompt, systemPrompt);
+    return this.generateContentWithAgent(prompt, 'orchestrator', systemPrompt);
+  }
+
+  /**
+   * Retrieve relevant content from knowledge base
+   */
+  private async retrieveKnowledgeBaseContent(query: string): Promise<any[]> {
+    if (!config.bedrock.knowledgeBase.knowledgeBaseId || 
+        config.bedrock.knowledgeBase.knowledgeBaseId === 'your-knowledge-base-id') {
+      logger.info('Knowledge base ID not configured, skipping retrieval', {});
+      return [];
+    }
+
+    try {
+      const command = new RetrieveCommand({
+        knowledgeBaseId: config.bedrock.knowledgeBase.knowledgeBaseId,
+        retrievalQuery: {
+          text: query
+        },
+        retrievalConfiguration: {
+          vectorSearchConfiguration: {
+            numberOfResults: config.bedrock.knowledgeBase.numberOfResults
+          }
+        }
+      });
+
+      const response = await this.agentClient.send(command);
+      
+      logger.info('Knowledge base retrieval completed', {
+        knowledgeBaseId: config.bedrock.knowledgeBase.knowledgeBaseId,
+        query: query.substring(0, 100),
+        resultsCount: response.retrievalResults?.length || 0
+      });
+
+      return response.retrievalResults || [];
+    } catch (error) {
+      logger.error('Error retrieving from knowledge base:', { 
+        error: error instanceof Error ? error.message : String(error),
+        knowledgeBaseId: config.bedrock.knowledgeBase.knowledgeBaseId 
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Format knowledge base results into context string
+   */
+  private formatKnowledgeBaseResults(results: any[]): string {
+    if (!results || results.length === 0) {
+      return '';
+    }
+
+    const formattedResults = results
+      .filter(result => result.content?.text) // Only include results with text content
+      .map((result, index) => {
+        const metadata = result.metadata || {};
+        const score = result.score ? ` (Relevance: ${Math.round(result.score * 100)}%)` : '';
+        const source = metadata.source || metadata.uri || `Source ${index + 1}`;
+        
+        return `### Knowledge Source: ${source}${score}
+
+${result.content.text.trim()}
+
+---`;
+      })
+      .join('\n\n');
+
+    if (!formattedResults) {
+      return '';
+    }
+
+    return `The following information has been retrieved from the knowledge base to help provide accurate and contextual responses:
+
+${formattedResults}
+
+Please use this knowledge base information to enhance your response with specific, accurate details where relevant.`;
   }
 }
